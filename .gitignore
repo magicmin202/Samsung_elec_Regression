@@ -1,1 +1,62 @@
-.venv
+# 가상환경
+.venv/
+venv/
+env/
+
+# 키 및 민감 정보
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.json
+config_secret.py
+api_keys.py
+credentials.json
+service_account.json
+token.json
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# 데이터 파일 (대용량 원본만 제외, outputs/ 결과 CSV는 추적)
+data/
+*.xlsx
+*.xls
+*.parquet
+*.hdf5
+data/raw/
+data/external/
+
+# 모델 파일 (대용량)
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.h5
+
+# 노트북 체크포인트
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# 로그
+*.log
+logs/
+
+# 빌드 결과물
+dist/
+build/
+*.egg-info/

@@ -1,6 +1,4 @@
-# Dev environment
-pip
-autopep8
-
-# App
-flask
+pandas
+numpy
+scikit-learn
+matplotlib

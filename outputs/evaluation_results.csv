@@ -1,0 +1,2 @@
+﻿Model,Train_start,Train_end,Test_start,Test_end,MSE,RMSE,R2,MAE
+Linear Regression,2021-04-30,2025-04-30,2025-05-01,2026-04-30,30416419.69,5515.11,0.9891,3372.18

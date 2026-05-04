@@ -1,7 +1,224 @@
-# Flask Web App Starter
+# 삼성전자 주가 예측 - Linear Regression
 
-A Flask starter template as per [these docs](https://flask.palletsprojects.com/en/3.0.x/quickstart/#a-minimal-application).
+## 프로젝트 목적
 
-## Getting Started
+KRX에서 수집한 삼성전자 일별 주가 데이터를 활용하여 **다음 날 종가**를 예측하는 회귀 모델을 구축한다.  
+본 프로젝트는 **Linear Regression** 담당 파트이며, 팀원의 **Random Forest Regression** 결과와 동일한 평가 기준으로 비교한다.
 
-Previews should run automatically when starting a workspace.
+---
+
+## 데이터 설명
+
+| 항목 | 내용 |
+|------|------|
+| 출처 | KRX (한국거래소) |
+| 종목 | 삼성전자 (005930) |
+| 기간 | 2021-04-30 ~ 2026-04-30 |
+| 행 수 | 1,225일 (결측치 제거 후: 1,205일) |
+| 원본 파일 | `data/삼성전자_20210430_20260430.csv` |
+
+### 컬럼 설명
+
+| 컬럼명 | 설명 |
+|--------|------|
+| 일자 | 거래일 |
+| 종가 | 당일 종가 (예측 target의 소스) |
+| 시가 | 당일 시가 |
+| 고가 | 당일 고가 |
+| 저가 | 당일 저가 |
+| 거래량 | 당일 거래량 |
+| 거래대금 | 당일 거래대금 |
+| 시가총액 | 당일 시가총액 |
+| 상장주식수 | 상장 주식 수 |
+
+---
+
+## Train / Test 기간
+
+| 구분 | 기간 | 거래일 수 |
+|------|------|-----------|
+| Train | 2021-04-30 ~ 2025-04-30 | 963일 |
+| Test  | 2025-05-01 ~ 2026-04-30 | 242일 |
+
+> **주의:** 주가는 시계열 데이터이므로 `train_test_split(shuffle=True)`을 사용하지 않는다.  
+> 날짜 기준 분리를 통해 데이터 누수(data leakage)를 방지한다.
+
+---
+
+## 사용 모델: Linear Regression
+
+`sklearn.linear_model.LinearRegression`을 사용한다.  
+선형 회귀는 피처와 target 사이의 선형 관계를 학습하며,  
+계수(coefficient) 해석이 가능하여 **baseline 모델**로 적합하다.
+
+---
+
+## Feature Engineering
+
+### 기본 피처 (8개)
+
+| 피처 | 설명 |
+|------|------|
+| 시가 | 당일 시가 |
+| 고가 | 당일 고가 |
+| 저가 | 당일 저가 |
+| 종가 | 당일 종가 |
+| 거래량 | 당일 거래량 |
+| 거래대금 | 당일 거래대금 |
+| 시가총액 | 당일 시가총액 |
+| 상장주식수 | 상장 주식 수 |
+
+### 파생 피처 (9개)
+
+| 피처 | 설명 |
+|------|------|
+| MA5 | 5일 이동평균 (단기 추세) |
+| MA20 | 20일 이동평균 (중기 추세) |
+| Return | 전일 대비 수익률 (`pct_change`) |
+| Volatility | 10일 rolling 표준편차 (변동성) |
+| Price_range | 고가 - 저가 (당일 가격 폭) |
+| Lag_1 | 전날 종가 |
+| Lag_2 | 2일 전 종가 |
+| Lag_3 | 3일 전 종가 |
+| Lag_5 | 5일 전 종가 |
+
+### Target
+
+```
+target = 다음날 종가  →  df['종가'].shift(-1)
+```
+
+---
+
+## 평가 지표
+
+| 지표 | 설명 |
+|------|------|
+| MSE | 오차의 제곱 평균. 큰 오차에 민감하게 패널티를 부여함 |
+| RMSE | MSE의 제곱근. **원(₩) 단위로 해석 가능** (평균 ±N원 오차) |
+| R² | 결정계수. 1에 가까울수록 모델이 분산을 잘 설명함 |
+| MAE | 오차 절댓값의 평균. 이상치에 덜 민감한 지표 |
+
+---
+
+## 실험 결과
+
+### 전체 학습 기간 테스트 결과 (4년 학습)
+
+| 지표 | 값 |
+|------|-----|
+| MSE | 30,416,419.69 |
+| RMSE | **5,515.11 원** |
+| R² | **0.9891** |
+| MAE | 3,372.18 원 |
+
+### 학습 데이터 양 변화 실험
+
+| 학습 기간 | 거래일 수 | MSE | RMSE | R² | MAE |
+|-----------|-----------|-----|------|-----|-----|
+| 1년 학습 | 243일 | 40,680,823 | 6,378 | 0.9855 | 4,062 |
+| 2년 학습 | 487일 | 35,257,492 | 5,938 | 0.9874 | 3,792 |
+| 3년 학습 | 735일 | 31,475,059 | 5,610 | 0.9888 | 3,535 |
+| 4년 학습 | 963일 | 30,416,420 | **5,515** | **0.9891** | **3,372** |
+
+> 학습 데이터가 많을수록 RMSE가 낮아지고 R²가 높아진다.  
+> 4년 데이터 사용 시 가장 좋은 성능을 보인다.
+
+### 회귀계수 상위 5개 피처
+
+| 순위 | 피처 | 계수 | 방향 |
+|------|------|------|------|
+| 1 | 시가총액 | +11,174.67 | 높을수록 예측 종가 상승 |
+| 2 | Lag_1 | -3,056.71 | 높을수록 예측 종가 하락 |
+| 3 | MA5 | -1,694.33 | 높을수록 예측 종가 하락 |
+| 4 | 종가 | -1,041.04 | 높을수록 예측 종가 하락 |
+| 5 | Lag_2 | +924.64 | 높을수록 예측 종가 상승 |
+
+---
+
+## 실행 방법
+
+### 1. 패키지 설치
+
+```bash
+# venv 사용 시
+.venv/bin/pip install -r requirements.txt
+
+# 또는 직접
+pip install pandas numpy scikit-learn matplotlib
+```
+
+### 2. 분석 실행
+
+```bash
+# venv Python으로 실행
+.venv/bin/python src/linear_regression_analysis.py
+
+# 또는
+python src/linear_regression_analysis.py
+```
+
+### 3. 결과 확인
+
+```
+outputs/
+├── actual_vs_predicted.png       # 실제 vs 예측 종가 그래프
+├── training_size_rmse.png        # 학습 기간별 RMSE 변화
+├── training_size_r2.png          # 학습 기간별 R² 변화
+├── evaluation_results.csv        # 전체 테스트 평가 지표
+├── training_size_experiment.csv  # 학습 기간 변화 실험 결과
+├── coefficient_analysis.csv      # 회귀계수 분석 결과
+└── predictions.csv               # 실제값 vs 예측값 원본 데이터
+```
+
+---
+
+## 팀 협업 방식
+
+| 역할 | 담당자 | 모델 |
+|------|--------|------|
+| Linear Regression | 본인 | sklearn LinearRegression |
+| Random Forest Regression | 팀원 | sklearn RandomForestRegressor |
+
+**비교 기준 통일:**
+- 동일한 원본 데이터 (`삼성전자_20210430_20260430.csv`)
+- 동일한 피처 엔지니어링 로직
+- 동일한 테스트 기간 (2025-05-01 ~ 2026-04-30)
+- 동일한 평가 지표 (MSE, RMSE, R², MAE)
+- 결과 CSV 형식을 동일하게 유지 → `evaluation_results.csv`
+
+---
+
+## GitHub 협업 규칙
+
+- `main` 브랜치는 안정 버전 유지
+- 개인 작업은 `feature/linear-regression` 브랜치에서 진행
+- 커밋 메시지는 명확하게 작성 (아래 예시 참고)
+- README는 실험 결과가 바뀔 때마다 최신화
+
+### 커밋 메시지 예시
+
+```
+feat: add linear regression analysis with 17 features
+
+- Build target column using shift(-1) for next-day close prediction
+- Add derived features: MA5, MA20, Return, Volatility, Price_range, Lag1-5
+- Apply StandardScaler fitted only on train data to prevent data leakage
+- Train/test split by date (train: ~2025-04-30, test: 2025-05-01~)
+```
+
+```
+feat: add training size experiment and coefficient analysis
+
+- Compare RMSE/R² across 1~4 year training windows
+- Analyze regression coefficients ranked by absolute value
+- Export all results to outputs/ as CSV and PNG
+```
+
+```
+docs: update README with evaluation results
+
+- Add final test metrics: RMSE 5,515, R² 0.9891
+- Add training size experiment table
+- Add top-5 feature coefficients table
+```
