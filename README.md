@@ -177,8 +177,8 @@ outputs/
 
 | 역할 | 담당자 | 모델 |
 |------|--------|------|
-| Linear Regression | 본인 | sklearn LinearRegression |
-| Random Forest Regression | 팀원 | sklearn RandomForestRegressor |
+| Linear Regression | 이승민 | sklearn LinearRegression |
+| Random Forest Regression | 김혜연 | sklearn RandomForestRegressor |
 
 **비교 기준 통일:**
 - 동일한 원본 데이터 (`삼성전자_20210430_20260430.csv`)
@@ -187,38 +187,3 @@ outputs/
 - 동일한 평가 지표 (MSE, RMSE, R², MAE)
 - 결과 CSV 형식을 동일하게 유지 → `evaluation_results.csv`
 
----
-
-## GitHub 협업 규칙
-
-- `main` 브랜치는 안정 버전 유지
-- 개인 작업은 `feature/linear-regression` 브랜치에서 진행
-- 커밋 메시지는 명확하게 작성 (아래 예시 참고)
-- README는 실험 결과가 바뀔 때마다 최신화
-
-### 커밋 메시지 예시
-
-```
-feat: add linear regression analysis with 17 features
-
-- Build target column using shift(-1) for next-day close prediction
-- Add derived features: MA5, MA20, Return, Volatility, Price_range, Lag1-5
-- Apply StandardScaler fitted only on train data to prevent data leakage
-- Train/test split by date (train: ~2025-04-30, test: 2025-05-01~)
-```
-
-```
-feat: add training size experiment and coefficient analysis
-
-- Compare RMSE/R² across 1~4 year training windows
-- Analyze regression coefficients ranked by absolute value
-- Export all results to outputs/ as CSV and PNG
-```
-
-```
-docs: update README with evaluation results
-
-- Add final test metrics: RMSE 5,515, R² 0.9891
-- Add training size experiment table
-- Add top-5 feature coefficients table
-```
