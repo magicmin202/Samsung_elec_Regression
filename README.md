@@ -7,137 +7,86 @@ KRX에서 수집한 삼성전자 일별 주가 데이터로 **다음 날 종가*
 
 ---
 
+## 실험 구성
+
+| 구분 | 스크립트 | 피처 | 결과 폴더 |
+|------|---------|------|----------|
+| Simple | `src/linear_regression_analysis.py` | 원본 10개 (한글) | `outputs/` |
+| Enriched | `src/linear_regression_enriched.py` | 원본 10개 + MA_20, Volatility_20, Close_MA20_Ratio = 13개 | `outputs2/` |
+
+---
+
 ## 데이터 설명
 
-| 항목 | 내용 |
-|------|------|
-| 출처 | KRX (한국거래소) |
-| 종목 | 삼성전자 (005930) |
-| 기간 | 2021-04-30 ~ 2026-04-30 |
-| 거래일 수 | 1,225일 (결측치 제거 후: 1,224일) |
-| 원본 파일 | `data/삼성전자_20210430_20260430.csv` |
+| 구분 | 파일 | 기간 | 행 수 |
+|------|------|------|-------|
+| Simple | `data/삼성전자_20210430_20260430.csv` | 2021-04-30 ~ 2026-04-30 | 1,224일 |
+| Enriched | `data/삼성전자_feature_engineered.csv` | 2021-07-26 ~ 2026-04-29 | 1,165일 |
 
 ---
 
 ## Train / Test 기간
 
-| 구분 | 기간 | 거래일 수 |
-|------|------|-----------|
-| Train (Case4 기준) | 2021-04-30 ~ 2025-04-30 | 982일 |
-| Test | 2025-05-01 ~ 2026-04-30 | 242일 |
-
-> 시계열 데이터이므로 날짜 기준 분리. `train_test_split(shuffle=True)` 사용 금지.
+| 구분 | 기간 | 비고 |
+|------|------|------|
+| Train (Case4) | ~ 2025-04-30 | Case별로 1~4년 학습 |
+| Test | 2025-05-01 ~ 2026-04-30 | 모든 실험 고정 |
 
 ---
 
-## 사용 모델: Linear Regression
+## Feature Set
 
-`sklearn.linear_model.LinearRegression` + `StandardScaler`
+### Simple (10개 — outputs/)
 
----
+`종가, 대비, 등락률, 시가, 고가, 저가, 거래량, 거래대금, 시가총액, 상장주식수`
 
-## Feature Set: Simple (원본 10개 컬럼)
+### Enriched (13개 — outputs2/)
 
-| # | 피처 | 설명 |
-|---|------|------|
-| 1 | 종가 | 당일 종가 |
-| 2 | 대비 | 전일 대비 변화금액 |
-| 3 | 등락률 | 전일 대비 등락률 (%) |
-| 4 | 시가 | 당일 시가 |
-| 5 | 고가 | 당일 고가 |
-| 6 | 저가 | 당일 저가 |
-| 7 | 거래량 | 당일 거래량 |
-| 8 | 거래대금 | 당일 거래대금 |
-| 9 | 시가총액 | 당일 시가총액 |
-| 10 | 상장주식수 | 상장 주식 수 |
-
-**Target:** `df['종가'].shift(-1)` → 다음 날 종가
+원본 10개(영어) + `MA_20, Volatility_20, Close_MA20_Ratio`
 
 ---
 
-## 예측 방식 비교
+## 예측 방식
 
-### B. Walk-Forward 종가만 LR (WF 종가만)
-
-이전 스텝의 **종가 예측값**만 다음 스텝의 종가 입력으로 교체.
-나머지 피처는 실제값 사용. ±30% 클리핑으로 수치 폭발 방지.
-
-### C. Walk-Forward 전체 피처 LR (WF 전체 LR)
-
-각 피처별로 독립 LR 모델을 학습하여 **모든 피처**를 이전 스텝 예측값으로 교체.
-클리핑 없이 그대로 기록 → 오차 누적 및 수렴 현상 관찰 목적.
-
----
-
-## 평가 지표
-
-| 지표 | 설명 |
+| 방식 | 설명 |
 |------|------|
-| MSE | 오차의 제곱 평균 |
-| RMSE | √MSE → 원(₩) 단위 해석 가능 |
-| R² | 결정계수. 1에 가까울수록 분산을 잘 설명 |
-| MAE | 오차 절댓값의 평균 |
+| B. WF 종가만 | 이전 예측 종가만 교체, ±30% 클리핑 |
+| C. WF 전체 LR | 모든 피처를 예측값으로 교체, 클리핑 없음 (수렴 현상 관찰) |
 
 ---
 
 ## 실험 결과
 
-### 4Y 학습 기준 — WF 종가만 vs WF 전체 LR
+### Simple Features (10개) — Case별 RMSE
 
-| 방식 | RMSE | R² | MAE |
-|------|------|----|-----|
-| WF 종가만 LR | **6,589원** | **0.9845** | 3,941원 |
-| WF 전체 LR | 75,285원 | -1.0248 | 55,268원 |
+| Case | 학습 기간 | WF 종가만 RMSE | WF 종가만 R² | WF 전체 LR RMSE | WF 전체 LR R² |
+|------|----------|--------------|------------|----------------|--------------|
+| Case1 | 1Y (2024~2025) | 15,775원 | 0.9111 | 75,475원 | -1.0351 |
+| Case2 | 2Y (2023~2025) | 14,433원 | 0.9256 | 75,028원 | -1.0110 |
+| Case3 | 3Y (2022~2025) | 12,155원 | 0.9472 | 75,191원 | -1.0198 |
+| Case4 | 4Y (2021~2025) | **6,589원** | **0.9845** | 75,285원 | -1.0248 |
 
-### Case별 학습 기간 변화 실험
+### Enriched Features (13개) — Case별 RMSE
 
-| Case | 학습 기간 | 거래일 | WF 종가만 RMSE | WF 종가만 R² | WF 전체 LR RMSE | WF 전체 LR R² |
-|------|----------|--------|--------------|------------|----------------|--------------|
-| Case1 | 2024-04 ~ 2025-04 | 243일 | 15,775원 | 0.9111 | 75,475원 | -1.0351 |
-| Case2 | 2023-04 ~ 2025-04 | 487일 | 14,433원 | 0.9256 | 75,028원 | -1.0110 |
-| Case3 | 2022-04 ~ 2025-04 | 735일 | 12,155원 | 0.9472 | 75,191원 | -1.0198 |
-| Case4 | 2021-04 ~ 2025-04 | 982일 | **6,589원** | **0.9845** | 75,285원 | -1.0248 |
+| Case | 학습 기간 | WF Close만 RMSE | WF Close만 R² | WF 전체 LR RMSE | WF 전체 LR R² |
+|------|----------|----------------|--------------|----------------|--------------|
+| Case1 | 1Y | 5,394원 | 0.9896 | 79,595원 | -1.2640 |
+| Case2 | 2Y | 5,455원 | 0.9894 | 82,890원 | -1.4553 |
+| Case3 | 3Y | **5,384원** | **0.9896** | 80,548원 | -1.3185 |
+| Case4 | 4Y | 5,629원 | 0.9887 | 79,155원 | -1.2390 |
 
-> WF 전체 LR: 학습 기간과 무관하게 예측값이 초반에 수렴하여 실제 주가 추세를 전혀 따라가지 못함.
+> MA_20, Volatility_20, Close_MA20_Ratio 추가로 Case4 기준 RMSE 6,589 → 5,629원 개선.
 
 ---
 
 ## 실행 방법
 
 ```bash
-# 패키지 설치
-.venv/bin/pip install -r requirements.txt
-
-# 분석 실행
+# Simple 분석 (outputs/ 저장)
 .venv/bin/python src/linear_regression_analysis.py
-```
 
-### 생성 파일 (`outputs/`)
-
-```
-# WF 종가만 결과
-actual_vs_predicted_simple_walkforward.png
-histogram_comparison_simple_walkforward.png
-case_comparison_panel_simple_walkforward.png
-case_comparison_overlay_simple_walkforward.png
-training_size_rmse_simple_walkforward.png
-training_size_r2_simple_walkforward.png
-case_predictions_simple_walkforward.csv
-training_size_experiment_simple_walkforward.csv
-
-# WF 종가만 vs WF 전체 LR 비교
-walkforward_comparison_case4.png
-
-# WF 전체 LR 결과
-walkforward_allfeat_lr_panel.png
-walkforward_allfeat_lr_features_case1~4.png   ← Case별 피처 궤적 (5×2 패널)
-walkforward_allfeat_lr_stepwise_case1~4.csv   ← Case별 스텝별 전체 피처 예측값
-walkforward_allfeat_lr_inversion_case4.png
-
-# 공통
-evaluation_results_simple.csv
-coefficient_analysis_simple.csv
-predictions_simple.csv
+# Enriched 분석 (outputs2/ 저장)
+.venv/bin/python src/linear_regression_enriched.py
 ```
 
 ---
@@ -149,8 +98,7 @@ predictions_simple.csv
 | Linear Regression | 이승민 | sklearn LinearRegression |
 | Random Forest Regression | 김혜연 | sklearn RandomForestRegressor |
 
-- 동일 원본 데이터, 동일 테스트 기간(2025-05 ~ 2026-04), 동일 평가 지표로 공정 비교
-- `evaluation_results_simple.csv` 형식을 통일해 결과 합산
+- 동일 테스트 기간(2025-05 ~ 2026-04), 동일 평가 지표(RMSE, R², MAE)로 공정 비교
 
 ---
 

@@ -7,7 +7,7 @@ Data Science Term Project
 
 데이터: KRX 삼성전자 일별 주가 (2021-04-30 ~ 2026-04-30)
 목표: 다음 날 종가 예측
-피처: Simple (원본 10개 컬럼)
+피처: Simple (원본 10개 컬럼)****
 예측 방식: Batch Prediction vs Walk-Forward Prediction
 """
 
@@ -696,7 +696,52 @@ def run_all_methods_experiment(df: pd.DataFrame, feature_cols: list):
 
 
 # =============================================================================
-# 18. 시각화 1 — Case4 기준 4방식 오버레이
+# 18. WF 전체 LR Case별 RMSE 그래프
+# =============================================================================
+
+def plot_allfeat_rmse_by_case(all_results: dict):
+    """WF 전체 피처 LR (C)의 Case1~4 RMSE 변화를 막대+선 그래프로 저장."""
+    cases      = [1, 2, 3, 4]
+    labels     = [f'Case{c}\n({c}Y)' for c in cases]
+    rmse_c     = [all_results[c]['C']['RMSE'] for c in cases]
+    rmse_b     = [all_results[c]['B']['RMSE'] for c in cases]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle('Case별 RMSE 비교 [Simple Features]', fontsize=13, fontweight='bold')
+
+    # 왼쪽: WF 종가만 (B)
+    ax = axes[0]
+    bars = ax.bar(labels, rmse_b, color='darkorange', alpha=0.75, width=0.5)
+    ax.plot(labels, rmse_b, marker='o', color='darkorange', linewidth=2, zorder=3)
+    for bar, v in zip(bars, rmse_b):
+        ax.text(bar.get_x() + bar.get_width() / 2, v + 200,
+                f'{v:,.0f}', ha='center', va='bottom', fontsize=9)
+    ax.set_title('WF 종가만 LR (B)')
+    ax.set_xlabel('Case (학습 기간)')
+    ax.set_ylabel('RMSE (원)')
+    ax.grid(True, alpha=0.3, axis='y')
+
+    # 오른쪽: WF 전체 LR (C)
+    ax = axes[1]
+    bars = ax.bar(labels, rmse_c, color='seagreen', alpha=0.75, width=0.5)
+    ax.plot(labels, rmse_c, marker='s', color='seagreen', linewidth=2, zorder=3)
+    for bar, v in zip(bars, rmse_c):
+        ax.text(bar.get_x() + bar.get_width() / 2, v + 500,
+                f'{v:,.0f}', ha='center', va='bottom', fontsize=9)
+    ax.set_title('WF 전체 피처 LR (C)')
+    ax.set_xlabel('Case (학습 기간)')
+    ax.set_ylabel('RMSE (원)')
+    ax.grid(True, alpha=0.3, axis='y')
+
+    fig.tight_layout()
+    path = os.path.join(OUTPUT_DIR, 'training_size_rmse_allfeat_lr.png')
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"▶ 저장: training_size_rmse_allfeat_lr.png")
+
+
+# =============================================================================
+# 19. 시각화 1 — Case4 기준 오버레이
 # =============================================================================
 
 def plot_two_method_comparison(test_dates, y_true: np.ndarray,
@@ -1056,6 +1101,9 @@ def main():
 
     all_results, all_preds_ext, y_test_ext, test_dates_ext = \
         run_all_methods_experiment(df, feature_cols)
+
+    # ─ Case별 RMSE 그래프 (B + C)
+    plot_allfeat_rmse_by_case(all_results)
 
     # ─ Case4 기준 B vs C 오버레이
     plot_two_method_comparison(test_dates_ext, y_test_ext,
