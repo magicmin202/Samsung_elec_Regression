@@ -21,8 +21,18 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
-plt.rcParams['font.family'] = 'DejaVu Sans'
-plt.rcParams['axes.unicode_minus'] = False
+def _set_font():
+    import matplotlib.font_manager as fm
+    import os
+    font_path = os.path.expanduser('~/.local/share/fonts/NotoSansKR-Regular.otf')
+    if os.path.exists(font_path):
+        fm.fontManager.addfont(font_path)
+        plt.rcParams['font.family'] = 'Noto Sans KR'
+    else:
+        plt.rcParams['font.family'] = 'DejaVu Sans'
+    plt.rcParams['axes.unicode_minus'] = False
+
+_set_font()
 
 # ── 경로 설정 ──────────────────────────────────────────────────────────────────
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -451,16 +461,9 @@ def plot_case_comparison(test_dates, y_true: np.ndarray,
 # =============================================================================
 
 def training_size_experiment(df: pd.DataFrame, feature_cols: list):
-    """
-    Case1~4 학습 기간 변화 실험을 Batch / Walk-Forward 두 방식으로 실행한다.
-
-    반환:
-      batch_results_df, batch_case_preds,
-      wf_results_df,    wf_case_preds,
-      y_test, test_dates
-    """
+    """Case1~4 학습 기간 변화 실험 — Walk-Forward 종가만 (B)."""
     print("\n" + "=" * 60)
-    print("[ 6. 학습 데이터 양 변화 실험 (Batch & Walk-Forward) ]")
+    print("[ 6. 학습 데이터 양 변화 실험 (WF 종가만) ]")
     print("=" * 60)
 
     test       = df[(df['일자'] >= TEST_START) & (df['일자'] <= TEST_END)].copy()
@@ -468,10 +471,8 @@ def training_size_experiment(df: pd.DataFrame, feature_cols: list):
     y_test     = test['target'].values
     test_dates = test['일자'].values
 
-    batch_results = []
-    wf_results    = []
-    batch_preds   = {}
-    wf_preds      = {}
+    wf_results = []
+    wf_preds   = {}
 
     for years in [1, 2, 3, 4]:
         train_end_dt   = pd.Timestamp(TRAIN_END)
@@ -484,29 +485,13 @@ def training_size_experiment(df: pd.DataFrame, feature_cols: list):
         if len(train_sub) < 30:
             continue
 
-        X_train = train_sub[feature_cols].values
-        y_train = train_sub['target'].values
+        scaler = StandardScaler()
+        X_tr_s = scaler.fit_transform(train_sub[feature_cols].values)
+        model  = LinearRegression()
+        model.fit(X_tr_s, train_sub['target'].values)
 
-        scaler    = StandardScaler()
-        X_train_s = scaler.fit_transform(X_train)
-
-        model = LinearRegression()
-        model.fit(X_train_s, y_train)
-
-        # ── Batch
-        X_test_s     = scaler.transform(X_test_raw)
-        y_pred_batch = model.predict(X_test_s)
-
-        # ── Walk-Forward
         y_pred_wf = walk_forward_predict(model, scaler, X_test_raw, feature_cols)
-
-        label = f'Case{years} ({years}Y Train: {train_start_dt.strftime("%Y-%m")}~{TRAIN_END[:7]})'
-
-        m_b = evaluate(y_test, y_pred_batch, label=label)
-        m_b['Train_start'] = train_start_dt.date()
-        m_b['Train_days']  = len(train_sub)
-        batch_results.append(m_b)
-        batch_preds[label] = y_pred_batch
+        label     = f'Case{years} ({years}Y Train: {train_start_dt.strftime("%Y-%m")}~{TRAIN_END[:7]})'
 
         m_w = evaluate(y_test, y_pred_wf, label=label)
         m_w['Train_start'] = train_start_dt.date()
@@ -515,54 +500,25 @@ def training_size_experiment(df: pd.DataFrame, feature_cols: list):
         wf_preds[label] = y_pred_wf
 
         print(f"\n  [Case{years}: {years}년 학습] {train_start_dt.date()} ~ {TRAIN_END} ({len(train_sub)}일)")
-        print(f"  ▶ Batch:")
-        print_metrics(m_b)
-        print(f"  ▶ Walk-Forward:")
         print_metrics(m_w)
 
-    return (pd.DataFrame(batch_results), batch_preds,
-            pd.DataFrame(wf_results),    wf_preds,
-            y_test, test_dates)
+    return pd.DataFrame(wf_results), wf_preds, y_test, test_dates
 
 
 # =============================================================================
-# 11. 결과 요약표 출력
+# 11. Case별 예측값 CSV 저장
 # =============================================================================
 
-def print_comparison_table(batch_df: pd.DataFrame, wf_df: pd.DataFrame):
-    """Batch vs Walk-Forward 결과를 Case별로 나란히 출력한다."""
-    print("\n" + "=" * 70)
-    print("[ Case별 Batch vs Walk-Forward 결과 비교 ]")
-    print("=" * 70)
-    header = f"{'Case':<6} {'Train':<5} {'Batch RMSE':>12} {'Batch R²':>10} {'WF RMSE':>10} {'WF R²':>8}"
-    print(header)
-    print("-" * 70)
-    for i, (_, rb) in enumerate(batch_df.iterrows()):
-        rw    = wf_df.iloc[i]
-        years = i + 1
-        print(f"{i+1:<6} {years}Y    "
-              f"{rb['RMSE']:>12,.0f} {rb['R2']:>10.4f} "
-              f"{rw['RMSE']:>10,.0f} {rw['R2']:>8.4f}")
-    print("=" * 70)
-
-
-# =============================================================================
-# 12. Case별 예측값 CSV 저장
-# =============================================================================
-
-def save_case_predictions(test_dates, y_true: np.ndarray,
-                          batch_preds: dict, wf_preds: dict):
-    """Batch와 Walk-Forward 예측값을 각각 CSV로 저장한다."""
-    for mode, preds in [('batch', batch_preds), ('walkforward', wf_preds)]:
-        pred_df = pd.DataFrame({'Date': pd.to_datetime(test_dates), 'Actual': y_true})
-        for label, y_pred in preds.items():
-            n = list(preds.keys()).index(label) + 1
-            pred_df[f'Case{n}_Pred']  = y_pred
-            pred_df[f'Case{n}_Error'] = y_true - y_pred
-        fname = f'case_predictions_simple_{mode}.csv'
-        pred_df.to_csv(os.path.join(OUTPUT_DIR, fname),
-                       index=False, encoding='utf-8-sig')
-        print(f"▶ 저장: {fname}")
+def save_case_predictions(test_dates, y_true: np.ndarray, wf_preds: dict):
+    """WF 종가만 케이스별 예측값 CSV 저장."""
+    pred_df = pd.DataFrame({'Date': pd.to_datetime(test_dates), 'Actual': y_true})
+    for label, y_pred in wf_preds.items():
+        n = list(wf_preds.keys()).index(label) + 1
+        pred_df[f'Case{n}_Pred']  = y_pred
+        pred_df[f'Case{n}_Error'] = y_true - y_pred
+    fname = 'case_predictions_simple_walkforward.csv'
+    pred_df.to_csv(os.path.join(OUTPUT_DIR, fname), index=False, encoding='utf-8-sig')
+    print(f"▶ 저장: {fname}")
 
 
 # =============================================================================
@@ -597,50 +553,451 @@ def analyze_coefficients(model: LinearRegression, feature_cols: list) -> pd.Data
 # 14. 전체 결과 CSV 저장
 # =============================================================================
 
-def save_outputs(metrics: dict, exp_batch: pd.DataFrame, exp_wf: pd.DataFrame,
-                 coef_df: pd.DataFrame, test: pd.DataFrame,
-                 y_batch: np.ndarray, y_wf: np.ndarray):
-    """평가 결과, 실험 결과, 계수, 예측값을 CSV로 저장한다."""
-
-    # 전체 평가 결과 (4Y 학습 기준)
-    eval_rows = [
-        {'Model': 'Linear Regression (Batch)',        **{k: round(v, 4) if isinstance(v, float) else v
-                                                         for k, v in metrics['batch'].items() if k != 'Label'}},
-        {'Model': 'Linear Regression (Walk-Forward)', **{k: round(v, 4) if isinstance(v, float) else v
-                                                         for k, v in metrics['wf'].items() if k != 'Label'}},
-    ]
-    pd.DataFrame(eval_rows).to_csv(
+def save_outputs(m_wf: dict, wf_df: pd.DataFrame, coef_df: pd.DataFrame,
+                 test: pd.DataFrame, y_wf: np.ndarray):
+    """WF 종가만 평가 결과 + 계수 + 예측값 CSV 저장."""
+    eval_row = {'Model': 'LR WF 종가만',
+                **{k: round(v, 4) if isinstance(v, float) else v
+                   for k, v in m_wf.items() if k != 'Label'}}
+    pd.DataFrame([eval_row]).to_csv(
         os.path.join(OUTPUT_DIR, 'evaluation_results_simple.csv'),
         index=False, encoding='utf-8-sig')
 
-    # 케이스 실험 결과 (Batch)
-    exp_batch[['Label', 'Train_start', 'Train_days', 'MSE', 'RMSE', 'R2', 'MAE']].round(
-        {'MSE': 2, 'RMSE': 2, 'R2': 4, 'MAE': 2}).to_csv(
-        os.path.join(OUTPUT_DIR, 'training_size_experiment_simple_batch.csv'),
-        index=False, encoding='utf-8-sig')
-
-    # 케이스 실험 결과 (Walk-Forward)
-    exp_wf[['Label', 'Train_start', 'Train_days', 'MSE', 'RMSE', 'R2', 'MAE']].round(
+    wf_df[['Label', 'Train_start', 'Train_days', 'MSE', 'RMSE', 'R2', 'MAE']].round(
         {'MSE': 2, 'RMSE': 2, 'R2': 4, 'MAE': 2}).to_csv(
         os.path.join(OUTPUT_DIR, 'training_size_experiment_simple_walkforward.csv'),
         index=False, encoding='utf-8-sig')
 
-    # 회귀계수
     coef_df.to_csv(os.path.join(OUTPUT_DIR, 'coefficient_analysis_simple.csv'),
                    index=False, encoding='utf-8-sig')
 
-    # 예측값 원본 (4Y 기준)
     pd.DataFrame({
-        'Date'           : test['일자'].values,
-        'Actual'         : test['target'].values,
-        'Batch_Pred'     : y_batch,
-        'Batch_Error'    : test['target'].values - y_batch,
-        'WF_Pred'        : y_wf,
-        'WF_Error'       : test['target'].values - y_wf,
+        'Date'    : test['일자'].values,
+        'Actual'  : test['target'].values,
+        'WF_Pred' : y_wf,
+        'WF_Error': test['target'].values - y_wf,
     }).to_csv(os.path.join(OUTPUT_DIR, 'predictions_simple.csv'),
               index=False, encoding='utf-8-sig')
 
     print(f"\n▶ CSV 저장 완료: {OUTPUT_DIR}/")
+
+
+# =============================================================================
+# 15. Walk-Forward — 모든 피처를 예측값으로 교체 (LR)
+# =============================================================================
+
+def walk_forward_all_features_lr(train_df: pd.DataFrame, test_df: pd.DataFrame,
+                                  feature_cols: list, last_train_row: np.ndarray):
+    """
+    각 피처별 독립 LR 모델을 학습한 뒤, Walk-Forward 시 모든 피처를 예측값으로 교체한다.
+
+    [날짜 정합 수정]
+      모델 학습 구조: X(t 시점) → y(t+1 시점)
+      따라서 test 첫날(05-01) 종가를 예측하려면
+      train 마지막 행(04-30 실제값)을 current_x 초기값으로 사용해야 한다.
+
+        i=0: current_x=04-30 → 예측 → all_preds[0] = 05-01 종가 예측
+        i=1: current_x=05-01 예측값 → 예측 → all_preds[1] = 05-02 종가 예측
+        ...
+
+    [클리핑 없음 — 발산 관찰이 목적]
+      LR 계수가 불안정한 케이스에서는 예측이 증폭되어 수치 폭발이 발생할 수 있다.
+      이를 그대로 기록해 방식C의 발산 현상을 관찰한다.
+
+    Args:
+      last_train_row: train 마지막 행의 피처값 (날짜 정합을 위한 초기 입력)
+
+    Returns:
+      y_jongga  : 종가 예측값 배열 (n_test,)
+      all_preds : 전체 피처 예측 행렬 (n_test, n_features)
+    """
+    feat_idx    = {f: i for i, f in enumerate(feature_cols)}
+    X_train_all = train_df[feature_cols].values
+    X_tr        = X_train_all[:-1]   # 마지막 행 제외 (다음날 없음)
+
+    models_lr  = {}
+    scalers_lr = {}
+    for feat in feature_cols:
+        y_feat = X_train_all[1:, feat_idx[feat]]   # 다음날 피처값
+
+        scaler = StandardScaler()
+        X_s    = scaler.fit_transform(X_tr)
+        model  = LinearRegression()
+        model.fit(X_s, y_feat)
+
+        models_lr[feat]  = model
+        scalers_lr[feat] = scaler
+
+    n_test    = len(test_df)
+    all_preds = np.zeros((n_test, len(feature_cols)))
+    current_x = last_train_row.copy()   # 04-30 실제값 → 05-01 예측에 사용
+
+    for i in range(n_test):
+        next_x = np.zeros(len(feature_cols))
+        for j, feat in enumerate(feature_cols):
+            x_s       = scalers_lr[feat].transform(current_x.reshape(1, -1))
+            next_x[j] = models_lr[feat].predict(x_s)[0]
+        all_preds[i] = next_x      # i=0 → 05-01 예측, i=1 → 05-02 예측 ...
+        current_x    = next_x      # 클리핑 없이 그대로 다음 입력으로 사용
+
+    y_jongga = all_preds[:, feat_idx['종가']]
+    return y_jongga, all_preds
+
+
+# =============================================================================
+# 16. Case1~4 × 2방식 실험 (B: WF 종가만 LR, C: WF 전체 LR)
+# =============================================================================
+
+def run_all_methods_experiment(df: pd.DataFrame, feature_cols: list):
+    """
+    Case1~4 각각에 대해 두 가지 예측 방식을 실행한다.
+      B: Walk-Forward 종가만 교체 (LR, ±30% 클리핑)
+      C: Walk-Forward 전체 피처 교체 (LR, 클리핑 없음)
+    """
+    test       = df[(df['일자'] >= TEST_START) & (df['일자'] <= TEST_END)].copy()
+    y_test     = test['target'].values
+    test_dates = test['일자'].values
+
+    all_results = {}
+    all_preds   = {}
+
+    for years in [1, 2, 3, 4]:
+        train_end_dt   = pd.Timestamp(TRAIN_END)
+        train_start_dt = train_end_dt - pd.DateOffset(years=years)
+        train = df[(df['일자'] >= train_start_dt) & (df['일자'] <= train_end_dt)].copy()
+
+        print(f"\n{'='*60}")
+        print(f"  [Case{years}] {years}년 학습: {train_start_dt.date()} ~ {TRAIN_END}  ({len(train)}일)")
+        print(f"{'='*60}")
+
+        # ── B: WF 종가만 LR ──────────────────────────────────────────────
+        scaler_b = StandardScaler()
+        X_tr_b   = scaler_b.fit_transform(train[feature_cols].values)
+        model_b  = LinearRegression()
+        model_b.fit(X_tr_b, train['target'].values)
+        y_b = walk_forward_predict(model_b, scaler_b, test[feature_cols].values, feature_cols)
+        m_b = evaluate(y_test, y_b, f'Case{years} B')
+        print(f"\n  [B] WF 종가만 LR:"); print_metrics(m_b)
+
+        # ── C: WF 전체 피처 LR ───────────────────────────────────────────
+        last_train_row = train[feature_cols].values[-1]
+        print(f"\n  [C] WF 전체 피처 LR (클리핑 없음):")
+        y_c, all_c = walk_forward_all_features_lr(train, test, feature_cols, last_train_row)
+        m_c = evaluate(y_test, y_c, f'Case{years} C')
+        print_metrics(m_c)
+
+        all_results[years] = {'B': m_b, 'C': m_c}
+        all_preds[years]   = {
+            'B': y_b, 'C': y_c, 'C_all': all_c,
+            'train_max_jongga': train['종가'].max(),
+        }
+
+    return all_results, all_preds, y_test, test_dates
+
+
+# =============================================================================
+# 18. 시각화 1 — Case4 기준 4방식 오버레이
+# =============================================================================
+
+def plot_two_method_comparison(test_dates, y_true: np.ndarray,
+                               preds4: dict, results4: dict):
+    """Case4 기준 B(WF 종가만) vs C(WF 전체 LR) 오버레이 비교."""
+    dates = pd.to_datetime(test_dates)
+
+    def safe_lbl(m):
+        r, q = m['RMSE'], m['R2']
+        return (f'RMSE={r:,.0f} R²={q:.4f}' if np.isfinite(r) and np.isfinite(q)
+                else 'RMSE=diverged R²=N/A')
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+    ax.plot(dates, y_true,      color='steelblue', linewidth=2.0, label='실제값', zorder=5)
+    ax.plot(dates, preds4['B'], color='darkorange', linewidth=1.4, linestyle='--',
+            label=f'WF 종가만 LR — {safe_lbl(results4["B"])}', zorder=4)
+    ax.plot(dates, np.clip(preds4['C'], y_true.min() * 0.3, y_true.max() * 1.5),
+            color='seagreen', linewidth=1.4, linestyle=':',
+            label=f'WF 전체 LR — {safe_lbl(results4["C"])}', zorder=3)
+
+    ax.set_ylim(y_true.min() * 0.7, y_true.max() * 1.3)
+    ax.set_title('Samsung Electronics - WF 종가만 vs WF 전체 피처 비교 (Case4: 4Y)\n'
+                 '[Simple Features]  Test: 2025-05 ~ 2026-04', fontsize=12)
+    ax.set_xlabel('날짜')
+    ax.set_ylabel('종가 (원)')
+    ax.legend(fontsize=9, loc='upper left')
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis='x', rotation=30)
+    fig.tight_layout()
+    path = os.path.join(OUTPUT_DIR, 'walkforward_comparison_case4.png')
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"\n▶ 저장: walkforward_comparison_case4.png")
+
+
+# =============================================================================
+# 19. 시각화 2/3 — Case1~4 패널 (방식C 또는 D)
+# =============================================================================
+
+def plot_allfeature_panel(test_dates, y_true: np.ndarray,
+                          all_results: dict, all_preds: dict,
+                          method: str, color: str, fname: str):
+    """
+    방식C(LR) 또는 방식D(RF)의 Case1~4를 2×2 패널로 비교한다.
+    예측이 발산해도 y축은 실제값 기준으로 고정해 가독성을 유지한다.
+    """
+    dates = pd.to_datetime(test_dates)
+    y_lo  = y_true.min() * 0.7
+    y_hi  = y_true.max() * 1.3
+
+    label_map = {'C': 'WF All-Feat LR', 'D': 'WF All-Feat RF'}
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True, sharey=True)
+    fig.suptitle(
+        f'Samsung Electronics - {label_map[method]} [Simple Features]\n'
+        f'(Test: 2025-05-01 ~ 2026-04-30, y-axis fixed to actual range)',
+        fontsize=13, fontweight='bold')
+
+    for idx, years in enumerate([1, 2, 3, 4]):
+        ax   = axes.flatten()[idx]
+        m    = all_results[years][method]
+        y_pr = all_preds[years][method]
+
+        rmse_s = f'{m["RMSE"]:,.0f}' if np.isfinite(m['RMSE']) else 'diverged'
+        r2_s   = f'{m["R2"]:.4f}'    if np.isfinite(m['R2'])   else 'N/A'
+
+        ax.plot(dates, y_true, color='steelblue', linewidth=1.4, label='Actual')
+        ax.plot(dates, np.clip(y_pr, y_lo * 0.5, y_hi * 2),
+                color=color, linewidth=1.2, linestyle='--', label=label_map[method])
+        ax.fill_between(dates, y_true,
+                        np.clip(y_pr, y_lo, y_hi),
+                        alpha=0.12, color=color)
+        ax.set_ylim(y_lo, y_hi)
+
+        ts = str((pd.Timestamp(TRAIN_END) - pd.DateOffset(years=years)))[:7]
+        ax.set_title(
+            f'Case{years}: {years}Y Train ({ts}~2025-04)\n'
+            f'RMSE: {rmse_s} KRW   R²: {r2_s}',
+            fontsize=10)
+        ax.set_ylabel('Close Price (KRW)')
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(axis='x', rotation=30)
+
+    fig.tight_layout()
+    path = os.path.join(OUTPUT_DIR, fname)
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"▶ 저장: {fname}")
+
+
+# =============================================================================
+# 20. 이상값 분석 (방식C: WF 전체 피처 LR)
+# =============================================================================
+
+def analyze_anomalies(test_dates, all_preds: dict, feature_cols: list):
+    """
+    방식C (WF 전체 피처 LR, 클리핑 없음) 결과에서 Case별 이상값을 분석한다.
+
+    분석 항목:
+      1. 예측 종가 ≤ 0인 날짜와 값
+      2. 고가 예측 < 저가 예측 역전 횟수
+      3. 종가 예측 > 학습 데이터 최대값 × 2인 날짜
+    """
+    print("\n" + "=" * 60)
+    print("[ 이상값 분석: 방식C (WF 전체 피처 LR — 클리핑 없음) ]")
+    print("=" * 60)
+
+    feat_idx = {f: i for i, f in enumerate(feature_cols)}
+    dates    = pd.to_datetime(test_dates)
+
+    for years in [1, 2, 3, 4]:
+        mat       = all_preds[years]['C_all']            # (n_test, n_features)
+        train_max = all_preds[years]['train_max_jongga']
+
+        y_jongga = mat[:, feat_idx['종가']]
+        y_goga   = mat[:, feat_idx['고가']] if '고가' in feat_idx else None
+        y_jega   = mat[:, feat_idx['저가']] if '저가' in feat_idx else None
+
+        print(f"\n  ── Case{years} ({years}Y) ──")
+
+        # 1. 종가 ≤ 0
+        neg = y_jongga <= 0
+        if neg.any():
+            print(f"  ▶ 종가 ≤ 0인 날: {neg.sum()}건")
+            for d, v in list(zip(dates[neg], y_jongga[neg]))[:5]:
+                print(f"     {d.date()}: {v:,.2f}원")
+            if neg.sum() > 5:
+                print(f"     ... 외 {neg.sum()-5}건")
+        else:
+            print(f"  ▶ 종가 ≤ 0: 없음")
+
+        # 2. 고가 < 저가 역전
+        if y_goga is not None and y_jega is not None:
+            inv = y_goga < y_jega
+            print(f"  ▶ 고가 < 저가 역전 횟수: {inv.sum()}회")
+
+        # 3. 종가 > 학습 최대값 × 2
+        thresh   = train_max * 2
+        big      = y_jongga > thresh
+        if big.any():
+            print(f"  ▶ 종가 > {thresh:,.0f}원 (학습 최대 2배): {big.sum()}건")
+            for d, v in list(zip(dates[big], y_jongga[big]))[:5]:
+                print(f"     {d.date()}: {v:,.2f}원")
+            if big.sum() > 5:
+                print(f"     ... 외 {big.sum()-5}건")
+        else:
+            print(f"  ▶ 학습 최대값 2배({thresh:,.0f}원) 초과: 없음")
+
+
+# =============================================================================
+# 22. 스텝별 피처 예측값 추적 (Case4 기준, 방식C LR / 방식D RF)
+# =============================================================================
+
+def analyze_stepwise_predictions(test_dates, y_test: np.ndarray,
+                                  all_preds_ext: dict, feature_cols: list,
+                                  test_df: pd.DataFrame):
+    """Case4 기준 WF 전체 LR (C) 스텝별 피처 예측값 추적."""
+    print("\n" + "=" * 60)
+    print("[ 스텝별 피처 예측값 추적 분석 (Case4, WF 전체 LR) ]")
+    print("=" * 60)
+
+    feat_idx   = {f: i for i, f in enumerate(feature_cols)}
+    dates      = pd.to_datetime(test_dates)
+    n_test     = len(dates)
+    steps      = np.arange(n_test)
+    mat_c      = all_preds_ext[4]['C_all']
+    actual_mat = test_df[feature_cols].values
+
+    # ── 1. CSV 저장 (Case1~4 전체) ──────────────────────────────────────────
+    for case_num in [1, 2, 3, 4]:
+        mat_case = all_preds_ext[case_num]['C_all']
+        rows = {'Date': dates, 'Step': steps}
+        for feat in feature_cols:
+            rows[f'{feat}_pred'] = mat_case[:, feat_idx[feat]]
+        rows['종가_actual'] = y_test
+        fname = f'walkforward_allfeat_lr_stepwise_case{case_num}.csv'
+        pd.DataFrame(rows).to_csv(
+            os.path.join(OUTPUT_DIR, fname), index=False, encoding='utf-8-sig')
+        print(f"▶ 저장: {fname}")
+
+    # ── 2. 콘솔 통계 ────────────────────────────────────────────────────────
+    print(f"\n{'─'*60}")
+    print(f"  WF 전체 LR (C) — 피처별 예측값 통계 (Case4)")
+    print(f"{'─'*60}")
+    for feat in feature_cols:
+        pred   = mat_c[:, feat_idx[feat]]
+        actual = actual_mat[:, feat_idx[feat]]
+        print(f"\n  [{feat}]")
+        print(f"    예측 처음 3: {[round(v,1) for v in pred[:3]]}")
+        print(f"    예측 마지막 3: {[round(v,1) for v in pred[-3:]]}")
+        print(f"    예측  min={pred.min():>12,.1f}  max={pred.max():>14,.1f}  mean={pred.mean():>12,.1f}")
+        print(f"    실제  min={actual.min():>12,.1f}  max={actual.max():>14,.1f}  mean={actual.mean():>12,.1f}")
+
+    # ── 공통 유틸: 이중 y축 피처 패널 그리기 ────────────────────────────────
+    def plot_feature_panel(ax, dates, actual, pred, pred_color, pred_label):
+        pad_p = (pred.max() - pred.min()) * 0.15 if pred.max() != pred.min() else 1
+        ax.plot(dates, pred, color=pred_color, linewidth=1.2,
+                linestyle='--', label=pred_label, zorder=3)
+        ax.set_ylim(pred.min() - pad_p, pred.max() + pad_p)
+        ax.set_ylabel('예측값', color=pred_color, fontsize=8)
+        ax.tick_params(axis='y', labelcolor=pred_color, labelsize=7)
+        ax2 = ax.twinx()
+        ax2.plot(dates, actual, color='steelblue', linewidth=0.8,
+                 alpha=0.45, label='실제값', zorder=2)
+        ax2.set_ylim(actual.min(), actual.max())
+        ax2.set_ylabel('실제값', color='steelblue', fontsize=8)
+        ax2.tick_params(axis='y', labelcolor='steelblue', labelsize=7)
+        lines1, labs1 = ax.get_legend_handles_labels()
+        lines2, labs2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labs1 + labs2, fontsize=6, loc='upper left')
+        ax.grid(True, alpha=0.25)
+        ax.tick_params(axis='x', rotation=30, labelsize=7)
+
+    # ── 3. Viz: Case1~4 각각 피처별 WF 전체 LR 예측 궤적 (5×2) ────────────
+    train_end_dt = pd.Timestamp(TRAIN_END)
+    for case_num in [1, 2, 3, 4]:
+        mat_case  = all_preds_ext[case_num]['C_all']
+        train_start = (train_end_dt - pd.DateOffset(years=case_num)).strftime('%Y-%m')
+
+        fig, axes = plt.subplots(5, 2, figsize=(16, 20))
+        fig.suptitle(
+            f'WF 전체 피처 LR — 피처별 예측 궤적 (Case{case_num}: {case_num}Y 학습, {train_start}~2025-04)\n'
+            '왼쪽 축=LR 예측값(빨강)  |  오른쪽 축=실제값(파랑, 작게)',
+            fontsize=12, fontweight='bold')
+        for k, feat in enumerate(feature_cols):
+            ax     = axes.flatten()[k]
+            actual = actual_mat[:, feat_idx[feat]]
+            pred   = mat_case[:, feat_idx[feat]]
+            plot_feature_panel(ax, dates, actual, pred, 'tomato', 'LR 예측')
+            ax.set_title(feat, fontsize=10)
+        fig.tight_layout()
+        fname = f'walkforward_allfeat_lr_features_case{case_num}.png'
+        fig.savefig(os.path.join(OUTPUT_DIR, fname), dpi=130, bbox_inches='tight')
+        plt.close(fig)
+        print(f"▶ 저장: {fname}")
+
+    # ── 6. Viz 4: 고가 < 저가 역전 구간 표시 ───────────────────────────────
+    pred_goga = mat_c[:, feat_idx['고가']]
+    pred_jega = mat_c[:, feat_idx['저가']]
+    pred_jongga_c = mat_c[:, feat_idx['종가']]
+    inv_mask  = pred_goga < pred_jega
+    n_inv     = inv_mask.sum()
+
+    lo_j = y_test.min() * 0.7
+    hi_j = y_test.max() * 1.3
+
+    fig, ax = plt.subplots(figsize=(16, 5))
+    ax.plot(dates, y_test,
+            color='steelblue', linewidth=1.8, label='Actual Close', zorder=3)
+    ax.plot(dates, np.clip(pred_jongga_c, lo_j * 0.5, hi_j * 1.5),
+            color='seagreen', linewidth=1.2, linestyle='--',
+            label='LR Close Predicted (clipped)', zorder=2)
+    for d in dates[inv_mask]:
+        ax.axvline(d, color='red', linewidth=0.6, alpha=0.7, zorder=1)
+    # 범례용 더미 선
+    ax.axvline(dates[0] if n_inv == 0 else dates[inv_mask][0],
+               color='red', linewidth=1.0, alpha=0.0,
+               label=f'High < Low Inversion ({n_inv} days)')
+    ax.set_ylim(lo_j, hi_j)
+    ax.set_title(f'WF All-Feat LR — High < Low Inversion Detection (Case4)\n'
+                 f'Total inversions: {n_inv} / {n_test} days  '
+                 f'({n_inv/n_test*100:.1f}%)',
+                 fontsize=12)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Close Price (KRW)')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis='x', rotation=30)
+    fig.tight_layout()
+    p = os.path.join(OUTPUT_DIR, 'walkforward_allfeat_lr_inversion_case4.png')
+    fig.savefig(p, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"▶ 저장: walkforward_allfeat_lr_inversion_case4.png")
+    print(f"\n  ▶ 고가 < 저가 역전: 총 {n_inv}건 / {n_test}일 ({n_inv/n_test*100:.1f}%)")
+
+
+# =============================================================================
+# 21. 결과 요약표 (4방식 × 4케이스)
+# =============================================================================
+
+def print_full_comparison_table(all_results: dict):
+    """4가지 예측 방식 × 4 Case 결과를 표 형태로 출력한다."""
+
+    def fmt(m):
+        r, q = m['RMSE'], m['R2']
+        if np.isfinite(r) and np.isfinite(q):
+            return f'{r:>10,.0f} {q:>7.4f}'
+        return f'{"diverged":>10} {"N/A":>7}'
+
+    sep = "=" * 65
+    print("\n" + sep)
+    print("[ Case별 결과 비교: WF 종가만 LR vs WF 전체 LR ]")
+    print(sep)
+    print(f"{'Case':<5} {'Train':<4} {'WF 종가만 LR':^19} {'WF 전체 LR':^19}")
+    print(f"{'':9} {'RMSE':>10} {'R²':>7}  {'RMSE':>10} {'R²':>7}")
+    print("-" * 65)
+    for years in [1, 2, 3, 4]:
+        r = all_results[years]
+        print(f"{years:<5} {years}Y    {fmt(r['B'])}   {fmt(r['C'])}")
+    print(sep)
 
 
 # =============================================================================
@@ -664,63 +1021,61 @@ def main():
     # ─ Train / Test 분리
     train, test = split_by_date(df)
 
-    # ─ 4Y 기준 Batch 학습
+    # ─ 4Y 기준 LR 모델 학습 (WF 종가만에 사용)
     print("\n" + "=" * 60)
-    print("[ 5. 모델 학습 및 평가 (4Y 학습) ]")
+    print("[ 5. 모델 학습 및 WF 종가만 평가 (4Y 학습) ]")
     print("=" * 60)
-    model, scaler, y_batch, y_test = scale_and_train(train, test, feature_cols)
+    model, scaler, _, y_test = scale_and_train(train, test, feature_cols)
 
-    # ─ Walk-Forward 예측
     X_test_raw = test[feature_cols].values
     y_wf       = walk_forward_predict(model, scaler, X_test_raw, feature_cols)
-
-    m_batch = evaluate(y_test, y_batch, label='4Y Batch')
-    m_wf    = evaluate(y_test, y_wf,    label='4Y Walk-Forward')
-
-    print("\n  ▶ [Batch] 테스트 결과:")
-    print_metrics(m_batch)
-    print("\n  ▶ [Walk-Forward] 테스트 결과:")
+    m_wf       = evaluate(y_test, y_wf, label='4Y WF 종가만')
+    print("\n  ▶ [WF 종가만 LR] 테스트 결과:")
     print_metrics(m_wf)
 
-    # ─ 시각화: Batch
-    plot_actual_vs_predicted(test, y_batch, m_batch, 'simple_batch')
-    plot_histogram_comparison(y_test, y_batch, m_batch, 'simple_batch')
-
-    # ─ 시각화: Walk-Forward
+    # ─ 시각화: WF 종가만
     plot_actual_vs_predicted(test, y_wf, m_wf, 'simple_walkforward')
     plot_histogram_comparison(y_test, y_wf, m_wf, 'simple_walkforward')
 
-    # ─ 두 방식 비교 그래프
-    plot_batch_vs_walkforward(test['일자'].values, y_test, y_batch, y_wf, m_batch, m_wf)
+    # ─ Case1~4 실험 (WF 종가만)
+    wf_df, wf_preds, y_test_c, test_dates = training_size_experiment(df, feature_cols)
+    plot_training_size(wf_df, 'walkforward')
+    plot_case_comparison(test_dates, y_test_c, wf_preds, wf_df, 'walkforward')
+    save_case_predictions(test_dates, y_test_c, wf_preds)
 
-    # ─ Case1~4 실험 (Batch + Walk-Forward)
-    (batch_df, batch_preds,
-     wf_df,    wf_preds,
-     y_test_c, test_dates) = training_size_experiment(df, feature_cols)
-
-    # ─ RMSE / R² 변화 그래프
-    plot_training_size(batch_df, 'batch')
-    plot_training_size(wf_df,    'walkforward')
-
-    # ─ Case별 비교 패널
-    plot_case_comparison(test_dates, y_test_c, batch_preds, batch_df, 'batch')
-    plot_case_comparison(test_dates, y_test_c, wf_preds,    wf_df,    'walkforward')
-
-    # ─ Case별 예측값 CSV 저장
-    save_case_predictions(test_dates, y_test_c, batch_preds, wf_preds)
-
-    # ─ 회귀계수 분석
+    # ─ 회귀계수 분석 & CSV 저장
     coef_df = analyze_coefficients(model, feature_cols)
+    save_outputs(m_wf, wf_df, coef_df, test, y_wf)
 
-    # ─ 전체 결과 CSV 저장
-    save_outputs(
-        metrics={'batch': m_batch, 'wf': m_wf},
-        exp_batch=batch_df, exp_wf=wf_df,
-        coef_df=coef_df, test=test,
-        y_batch=y_batch, y_wf=y_wf)
+    # ══════════════════════════════════════════════════════
+    # 확장 실험: WF 종가만(B) vs WF 전체 LR(C) × Case1~4
+    # ══════════════════════════════════════════════════════
+    print("\n\n" + "=" * 60)
+    print("  WF 종가만 vs WF 전체 피처 LR 비교 실험")
+    print("=" * 60)
 
-    # ─ 최종 비교표 출력
-    print_comparison_table(batch_df, wf_df)
+    all_results, all_preds_ext, y_test_ext, test_dates_ext = \
+        run_all_methods_experiment(df, feature_cols)
+
+    # ─ Case4 기준 B vs C 오버레이
+    plot_two_method_comparison(test_dates_ext, y_test_ext,
+                               all_preds_ext[4], all_results[4])
+
+    # ─ WF 전체 LR Case1~4 패널
+    plot_allfeature_panel(test_dates_ext, y_test_ext,
+                          all_results, all_preds_ext,
+                          method='C', color='seagreen',
+                          fname='walkforward_allfeat_lr_panel.png')
+
+    # ─ 이상값 분석 (WF 전체 LR)
+    analyze_anomalies(test_dates_ext, all_preds_ext, feature_cols)
+
+    # ─ 스텝별 피처 예측값 추적 (Case4, WF 전체 LR)
+    analyze_stepwise_predictions(test_dates_ext, y_test_ext,
+                                 all_preds_ext, feature_cols, test)
+
+    # ─ 최종 요약표 (B vs C)
+    print_full_comparison_table(all_results)
 
     print("\n" + "=" * 60)
     print("  분석 완료! outputs/ 폴더를 확인하세요.")
